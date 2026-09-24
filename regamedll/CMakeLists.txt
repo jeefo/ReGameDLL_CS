@@ -17,7 +17,7 @@
 #    make
 #----------------------------------------
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.10)
 project(regamedll CXX)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -26,6 +26,13 @@ option(DEBUG "Build with debug information." OFF)
 option(USE_STATIC_LIBSTDC "Enables static linking libstdc++." OFF)
 option(USE_LEGACY_LIBC "Enables linking against legacy libc (<= 2.15) for compat with older distros (Debian 8/Ubuntu 16.04/Centos 7)." OFF)
 option(XASH_COMPAT "Enable Xash3D FWGS compatiblity (support for it's 64-bit ABI support and crossplatform library suffix)")
+option(X64 "Build 64-bit target on Linux." OFF)
+
+if (X64)
+	set(REGAMEDLL_PIC ON)
+else()
+	set(REGAMEDLL_PIC OFF)
+endif()
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,31 +43,40 @@ if (NOT XASH_COMPAT)
 	set(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "")
 endif()
 
-set(COMPILE_FLAGS "-U_FORTIFY_SOURCE")
-set(LINK_LIBS dl)
+if (MSVC)
+	set(COMPILE_FLAGS "/W3 /MP /bigobj")
+	set(LINK_LIBS "")
+else()
+	set(COMPILE_FLAGS "-U_FORTIFY_SOURCE")
+	set(LINK_LIBS dl)
 
-# do not strip debuginfo during link
-if (NOT DEBUG)
-	set(LINK_FLAGS "")
-endif()
+	# do not strip debuginfo during link
+	if (NOT DEBUG)
+		set(LINK_FLAGS "")
+	endif()
 
-# add -m32 flag only on 64-bit systems, if building for 64-bit wasn't enabled with XASH_COMPAT
-if (CMAKE_SIZEOF_VOID_P EQUAL 8)
-	if (XASH_COMPAT)
-		set(COMPILE_FLAGS "${COMPILE_FLAGS} -DXASH_64BIT")
-	else()
-		set(COMPILE_FLAGS "${COMPILE_FLAGS} -m32")
-		set(LINK_FLAGS "${LINK_FLAGS} -m32")
-		list(APPEND LINK_LIBS aelf32)
-		set(CMAKE_SIZEOF_VOID_P 4)
+	# add -m32 flag only on 64-bit systems, if building for 64-bit wasn't enabled with XASH_COMPAT
+	if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+		if (XASH_COMPAT)
+			set(COMPILE_FLAGS "${COMPILE_FLAGS} -DXASH_64BIT")
+		elseif (X64)
+			set(COMPILE_FLAGS "${COMPILE_FLAGS} -DXASH_64BIT")
+		else()
+			set(COMPILE_FLAGS "${COMPILE_FLAGS} -m32")
+			set(LINK_FLAGS "${LINK_FLAGS} -m32")
+			list(APPEND LINK_LIBS aelf32)
+			set(CMAKE_SIZEOF_VOID_P 4)
+		endif()
+	endif()
+
+	if(XASH_COMPAT)
+		# Xash3D FWGS Library Naming Scheme compliance
+		# see documentation: https://github.com/FWGS/xash3d-fwgs/blob/master/Documentation/extensions/library-naming.md
+		include(LibraryNaming)
 	endif()
 endif()
 
-if(XASH_COMPAT)
-	# Xash3D FWGS Library Naming Scheme compliance
-	# see documentation: https://github.com/FWGS/xash3d-fwgs/blob/master/Documentation/extensions/library-naming.md
-	include(LibraryNaming)
-endif()
+if (NOT MSVC)
 
 set(COMPILE_FLAGS "${COMPILE_FLAGS} -Wall -fno-exceptions -fno-builtin -Wno-unknown-pragmas")
 
@@ -142,6 +158,7 @@ if (NOT DEBUG)
 	set(LINK_FLAGS "${LINK_FLAGS} \
 		-Wl,-gc-sections -Wl,--version-script=\"${PROJECT_SOURCE_DIR}/../version_script.lds\"")
 endif()
+endif() # NOT MSVC
 
 find_program(CCACHE_FOUND ccache)
 if (CCACHE_FOUND)
@@ -173,6 +190,12 @@ set(ENGINE_SRCS
 	"engine/unicode_strtools.cpp"
 )
 
+if (WIN32)
+	set(REGAMEDLL_PLATFORM_SRC "public/tier0/platform_win32.cpp")
+else()
+	set(REGAMEDLL_PLATFORM_SRC "public/tier0/platform_posix.cpp")
+endif()
+
 set(SHARED_SRCS
 	"game_shared/shared_util.cpp"
 	"game_shared/voice_gamemgr.cpp"
@@ -197,8 +220,12 @@ set(SHARED_SRCS
 	"public/MemPool.cpp"
 	"public/MemPool.cpp"
 	"public/tier0/dbg.cpp"
-	"public/tier0/platform_posix.cpp"
+	${REGAMEDLL_PLATFORM_SRC}
 )
+
+if (WIN32)
+	list(APPEND SHARED_SRCS "public/tier0/assert_dialog.cpp")
+endif()
 
 set(GAMEDLL_SRCS
 	"dlls/airtank.cpp"
@@ -365,29 +392,48 @@ target_include_directories(regamedll PRIVATE
 	${PROJECT_PUBLIC_DIR}
 )
 
-target_compile_definitions(regamedll PRIVATE
-	REGAMEDLL_FIXES
-	REGAMEDLL_API
-	REGAMEDLL_ADD
-	UNICODE_FIXES
-	BUILD_LATEST
-	CLIENT_WEAPONS
-	USE_QSTRING
-	_LINUX
-	LINUX
-	NDEBUG
-	_GLIBCXX_USE_CXX11_ABI=0
-	_stricmp=strcasecmp
-	_strnicmp=strncasecmp
-	_strdup=strdup
-	_unlink=unlink
-	_snprintf=snprintf
-	_vsnprintf=vsnprintf
-	_write=write
-	_close=close
-	_access=access
-	_vsnwprintf=vswprintf
-)
+if (WIN32)
+	target_compile_definitions(regamedll PRIVATE
+		REGAMEDLL_FIXES
+		REGAMEDLL_API
+		REGAMEDLL_ADD
+		REGAMEDLL_SSE
+		REGAMEDLL_SELF
+		REGAMEDLL_CHECKS
+		UNICODE_FIXES
+		BUILD_LATEST
+		BUILD_LATEST_FIXES
+		CLIENT_WEAPONS
+		USE_QSTRING
+		XASH_64BIT
+		WIN32
+		_CRT_SECURE_NO_WARNINGS
+	)
+else()
+	target_compile_definitions(regamedll PRIVATE
+		REGAMEDLL_FIXES
+		REGAMEDLL_API
+		REGAMEDLL_ADD
+		UNICODE_FIXES
+		BUILD_LATEST
+		CLIENT_WEAPONS
+		USE_QSTRING
+		_LINUX
+		LINUX
+		NDEBUG
+		_GLIBCXX_USE_CXX11_ABI=0
+		_stricmp=strcasecmp
+		_strnicmp=strncasecmp
+		_strdup=strdup
+		_unlink=unlink
+		_snprintf=snprintf
+		_vsnprintf=vsnprintf
+		_write=write
+		_close=close
+		_access=access
+		_vsnwprintf=vswprintf
+	)
+endif()
 
 target_sources(regamedll PRIVATE
 	${GAMEDLL_SRCS}
@@ -398,7 +444,9 @@ target_sources(regamedll PRIVATE
 	${UNITTESTS_SRCS}>
 )
 
-if (CMAKE_BUILD_TYPE MATCHES Unittests)
+if (WIN32)
+	list(APPEND LINK_LIBS psapi ws2_32)
+elseif (CMAKE_BUILD_TYPE MATCHES Unittests)
 	list(APPEND LINK_LIBS cppunitlite)
 elseif (USE_LEGACY_LIBC)
 	list(APPEND LINK_LIBS libc-2.15.so)
@@ -408,42 +456,44 @@ target_link_libraries(regamedll PRIVATE ${LINK_LIBS})
 
 if (USE_STATIC_LIBSTDC)
 	target_compile_definitions(regamedll PRIVATE BUILD_STATIC_LIBSTDC)
-	set(LINK_FLAGS "${LINK_FLAGS} -static-libgcc -static-libstdc++")
-endif()
-
-set(LINK_FLAGS "${LINK_FLAGS} -Wl,-rpath,'$ORIGIN/.'")
-
-if (CMAKE_SIZEOF_VOID_P EQUAL 4)
-	set(LINK_FLAGS "${LINK_FLAGS} -L${PROJECT_SOURCE_DIR}/lib/linux32")
-endif()
-
-set(LINK_FLAGS "${LINK_FLAGS} -Wl,-z,notext")
-
-set_target_properties(regamedll PROPERTIES
-	COMPILE_FLAGS ${COMPILE_FLAGS}
-	LINK_FLAGS ${LINK_FLAGS}
-)
-
-if (XASH_COMPAT)
-	if (CMAKE_SYSTEM_NAME STREQUAL "Android")
-		set(LINK_FLAGS "${LINK_FLAGS} -Wl,-z,notext")
-
-set_target_properties(regamedll PROPERTIES
-			OUTPUT_NAME server)
-	else()
-		set(LINK_FLAGS "${LINK_FLAGS} -Wl,-z,notext")
-
-set_target_properties(regamedll PROPERTIES
-			PREFIX ""
-			OUTPUT_NAME cs${POSTFIX})
+	if (NOT MSVC)
+		set(LINK_FLAGS "${LINK_FLAGS} -static-libgcc -static-libstdc++")
 	endif()
+endif()
+
+if (WIN32)
+	set_target_properties(regamedll PROPERTIES
+		OUTPUT_NAME mp
+		PREFIX ""
+		COMPILE_FLAGS "${COMPILE_FLAGS}"
+		LINK_FLAGS "${LINK_FLAGS}"
+	)
 else()
+	set(LINK_FLAGS "${LINK_FLAGS} -Wl,-rpath,'$ORIGIN/.'")
+
+	if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+		set(LINK_FLAGS "${LINK_FLAGS} -L${PROJECT_SOURCE_DIR}/lib/linux32")
+	endif()
+
 	set(LINK_FLAGS "${LINK_FLAGS} -Wl,-z,notext")
 
-set_target_properties(regamedll PROPERTIES
-		OUTPUT_NAME cs
-		PREFIX ""
-		POSITION_INDEPENDENT_CODE OFF)
+	set_target_properties(regamedll PROPERTIES
+		COMPILE_FLAGS "${COMPILE_FLAGS}"
+		LINK_FLAGS "${LINK_FLAGS}"
+	)
+
+	if (XASH_COMPAT)
+		if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+			set(LINK_FLAGS "${LINK_FLAGS} -Wl,-z,notext")
+			set_target_properties(regamedll PROPERTIES OUTPUT_NAME server)
+		else()
+			set(LINK_FLAGS "${LINK_FLAGS} -Wl,-z,notext")
+			set_target_properties(regamedll PROPERTIES PREFIX "" OUTPUT_NAME cs${POSTFIX})
+		endif()
+	else()
+		set(LINK_FLAGS "${LINK_FLAGS} -Wl,-z,notext")
+		set_target_properties(regamedll PROPERTIES OUTPUT_NAME cs PREFIX "" POSITION_INDEPENDENT_CODE ${REGAMEDLL_PIC})
+	endif()
 endif()
 
 install(TARGETS regamedll
