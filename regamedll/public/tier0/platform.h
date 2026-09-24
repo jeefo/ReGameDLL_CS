@@ -43,6 +43,9 @@
 // Used to step into the debugger
 #if defined(__GNUC__) || defined(__clang__)
 	#define DebuggerBreak() __asm__ __volatile__("int3;")
+#elif defined(_M_X64) || defined(_M_ARM64)
+	#include <intrin.h>
+	#define DebuggerBreak() __debugbreak()
 #else
 	#define DebuggerBreak() __asm { int 3 }
 #endif
