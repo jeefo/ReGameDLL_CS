@@ -545,7 +545,11 @@ C_DLLEXPORT int Server_GetBlendingInterface(int version, struct sv_blending_inte
 #if defined(REGAMEDLL_FIXES) && defined(HAVE_SSE) // SSE2 version
 void AngleQuaternion(vec_t *angles, vec_t *quaternion)
 {
-	static const ALIGN16_BEG size_t ps_signmask[4] ALIGN16_END = { 0x80000000, 0, 0x80000000, 0 };
+	// the mask must be 32-bit lanes: on 64-bit targets size_t is 8 bytes, so a size_t[4]
+	// array is 32 bytes and _mm_load_ps only picks up the first lane (0x80000000, 0, 0, 0),
+	// flipping the sign of one quaternion component instead of two. uint32_t keeps the
+	// layout identical on 32-bit and correct on 64-bit
+	static const ALIGN16_BEG uint32_t ps_signmask[4] ALIGN16_END = { 0x80000000u, 0u, 0x80000000u, 0u };
 
 	vec4_t _ps_angles = { angles[0], angles[1], angles[2],  0.0f };
 
